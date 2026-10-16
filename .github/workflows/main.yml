@@ -1,0 +1,55 @@
+name: Build Windows EXE
+on: [push, workflow_dispatch]
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Patch for JUCE 7.0.12
+        shell: pwsh
+        run: |
+          $c = Get-Content "CMakeLists.txt" -Raw
+          $c =$c -replace "juce::juce_recommended_lto_flags", "" -replace "juce::juce_recommended_warning_flags", ""
+          if ($c -notmatch "juce_generate_juce_header") {
+              $c =$c -replace "target_sources\(Vibe2APro", "juce_generate_juce_header(Vibe2APro)`r`n`r`ntarget_sources(Vibe2APro"
+          }
+          Set-Content "CMakeLists.txt" -Value $c -Encoding UTF8
+
+          $e = Get-Content "Source/PluginEditor.cpp" -Raw
+          $e = [regex]::Replace($e, 'juce::Font\s*\(\s*juce::FontOptions\s*\(([^,]+),\s*juce::Font::bold\)\s*\)', 'juce::Font ($1, juce::Font::bold)')
+          Set-Content "Source/PluginEditor.cpp" -Value $e -Encoding UTF8
+
+      - name: Compile VST3
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --config Release
+
+      - name: Create Setup.exe
+        shell: pwsh
+        run: |
+          $vst3 = (Get-ChildItem -Path "build" -Filter "Vibe-2A Tube Opto.vst3" -Recurse -Directory | Select-Object -First 1).FullName
+          $iss = @"
+          [Setup]
+          AppName=Vibe-2A Pro Tube Opto
+          AppVersion=2.0.0
+          AppPublisher=Vibe Audio Labs
+          DefaultDirName={commoncf64}\VST3
+          ArchitecturesInstallIn64BitMode=x64compatible
+          OutputDir=out
+          OutputBaseFilename=Vibe-2A_Pro_v2_Setup
+          Compression=lzma2
+          SolidCompression=yes
+          WizardStyle=modern
+          [Files]
+          Source: "$vst3\*"; DestDir: "{app}\Vibe-2A Tube Opto.vst3"; Flags: ignoreversion recursesubdirs createallsubdirs
+          "@
+          Set-Content -Path "setup.iss" -Value $iss -Encoding UTF8
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "setup.iss"
+
+      - name: Upload EXE Installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: Vibe-2A_Pro_v2_Setup_EXE
+          path: out/Vibe-2A_Pro_v2_Setup.exe
